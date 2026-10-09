@@ -1,0 +1,24 @@
+{
+  "name": "wesco-doccentral",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Wesco Document Control Center (DCC): ลงทะเบียน แก้ไข ยกเลิก และดาวน์โหลดเอกสาร — Cloudflare Workers + D1 + R2",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-assets.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "admin:local": "node scripts/create-admin.mjs --local",
+    "admin:remote": "node scripts/create-admin.mjs --remote",
+    "setup:local": "npm run build && npm run db:migrate:local && npm run admin:local"
+  },
+  "devDependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans-thai": "^5.3.0",
+    "@fontsource/prompt": "^5.3.0",
+    "lucide-static": "^1.54.0",
+    "wrangler": "^4.149.0"
+  }
+}

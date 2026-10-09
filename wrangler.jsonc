@@ -1,0 +1,50 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "doccentral",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-15",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+
+  // หน้าเว็บ static (public/) — API อยู่ที่ /api/* ให้ Worker จัดการก่อน
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "build": { "command": "node scripts/build-assets.mjs" },
+
+  // ฐานข้อมูล (D1)
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "doccentral-db",
+      "database_id": "63667643-2706-4bb0-b525-57487f078ecb",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // ที่เก็บไฟล์เอกสาร (R2) — แทน share folder: 00_Pending / 01_Controlled / 02_Obsolete
+  "r2_buckets": [
+    { "binding": "FILES", "bucket_name": "doccentral-files" }
+  ],
+
+  "vars": {
+    // true = ดาวน์โหลดได้โดยไม่ต้อง login (บน internet คือทุกคนที่มีลิงก์)
+    "PUBLIC_LIBRARY": "false",
+    "DOC_PREFIX": "TH",
+    "SEQ_DIGITS": "3",
+    "REV_DIGITS": "2",
+    "MAX_UPLOAD_MB": "50",
+    "SESSION_HOURS": "12",
+    "REMEMBER_DAYS": "30",
+    "PBKDF2_ITERATIONS": "100000",
+    "FOLDER_PENDING": "00_Pending",
+    "FOLDER_CONTROLLED": "01_Controlled",
+    "FOLDER_OBSOLETE": "02_Obsolete",
+    // อีเมลแจ้งเตือน (ไม่บังคับ): ตั้ง MAIL_FROM แล้ว `npx wrangler secret put RESEND_API_KEY`
+    "MAIL_FROM": "",
+    "APP_URL": ""
+  }
+}

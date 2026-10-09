@@ -1,0 +1,17 @@
+node_modules/
+.wrangler/
+.dev.vars
+.admin-password*.txt
+.admin-seed.sql
+
+# สร้างโดย scripts/build-assets.mjs
+public/icons.svg
+public/vendor/
+
+# ข้อมูลจากเวอร์ชัน Node เดิม (ไม่ใช้แล้ว)
+data/
+storage/
+.env
+
+# เครื่องมือ dev ในเครื่อง
+.claude/
