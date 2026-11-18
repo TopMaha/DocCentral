@@ -2,6 +2,7 @@ import {
   html, icon, $, $$, mount, api, apiUpload, store, toast, confirmDialog, initials,
   docNo, fileExt, fmtSize, revText, TYPE, updateBadges,
 } from '../core.js';
+import { loadPositions, approverPicker, wirePicker, readPicker } from '../approvers.js';
 
 const ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.ppt,.pptx,.vsd,.vsdx,.txt,.csv,.jpg,.jpeg,.png,.zip,.dwg,.dxf';
 
@@ -18,6 +19,7 @@ export default async function requestNewView({ el, query, navigate, isCurrent })
     docs: null,
     categories: [],
     pickerQ: '',
+    approvals: [],
   };
 
   mount(el, html`
@@ -71,6 +73,12 @@ export default async function requestNewView({ el, query, navigate, isCurrent })
           <div id="file-body"></div>
           <div class="error-text" id="err-file" hidden style="margin-top:6px"></div>
         </section>
+
+        <section class="card form-section" aria-labelledby="s6" id="sec-appr">
+          <div class="fs-head"><span class="fs-num" id="n-appr">6</span><div><h2 id="s6">ผู้อนุมัติ <span class="req" style="color:var(--red-600)">*</span></h2><p>ติ๊กตำแหน่งที่ต้องอนุมัติคำขอนี้ แล้วเลือกคนในตำแหน่งนั้น — ต้องอนุมัติครบทุกคนที่เลือก</p></div></div>
+          <div id="appr-body"><div class="skeleton" style="height:220px;border-radius:14px"></div></div>
+          <div class="error-text" id="err-appr" hidden style="margin-top:6px"></div>
+        </section>
       </div>
 
       <aside class="form-aside">
@@ -81,7 +89,7 @@ export default async function requestNewView({ el, query, navigate, isCurrent })
             <h3 class="section-title" style="margin-bottom:10px">ขั้นตอนหลัง Submit</h3>
             <ol class="next-steps">
               <li><span class="ns-ic">${icon('clock')}</span>Admin ตรวจสอบคำขอ</li>
-              <li><span class="ns-ic">${icon('stamp')}</span>ผู้อนุมัติ อนุมัติ / ไม่อนุมัติ</li>
+              <li><span class="ns-ic">${icon('stamp')}</span>ผู้อนุมัติที่เลือก อนุมัติครบทุกคน</li>
               <li><span class="ns-ic">${icon('hash')}</span>DCC run DCN No. และประกาศใช้</li>
               <li><span class="ns-ic">${icon('folder-open')}</span>จัดเก็บเข้า share folder อัตโนมัติ</li>
             </ol>
@@ -123,14 +131,42 @@ export default async function requestNewView({ el, query, navigate, isCurrent })
 
   const selectedDoc = () => state.docs?.find((d) => d.id === state.documentId) || null;
 
+  // ---------- ผู้อนุมัติ ----------
+  const apprBody = $('#appr-body', el);
+  async function renderApprovers() {
+    let positions;
+    try {
+      positions = await loadPositions();
+    } catch (err) {
+      if (!isCurrent()) return;
+      mount(apprBody, html`<div class="notice notice-err">${icon('circle-alert')}<div>โหลดรายชื่อผู้อนุมัติไม่สำเร็จ: ${err.message}
+        <button type="button" class="btn btn-sm btn-soft" id="appr-retry" style="margin-left:8px">${icon('refresh-cw', 'ic-sm')}ลองใหม่</button></div></div>`);
+      $('#appr-retry', el).addEventListener('click', renderApprovers);
+      return;
+    }
+    if (!isCurrent()) return;
+    if (!positions.some((p) => p.approvers.some((x) => x.id !== u.id))) {
+      mount(apprBody, html`<div class="notice notice-warn">${icon('triangle-alert')}<div>ยังไม่มีผู้ดำรงตำแหน่งผู้อนุมัติในระบบ — กรุณาแจ้ง Admin ให้กำหนดตำแหน่ง (QA Manager, ENG Manager ฯลฯ) ที่เมนูจัดการผู้ใช้</div></div>`);
+      return;
+    }
+    mount(apprBody, approverPicker(positions, { requesterId: u.id, selected: state.approvals }));
+  }
+  wirePicker(apprBody, (list) => {
+    state.approvals = list;
+    if (list.length) $('#err-appr', el).hidden = true;
+    renderSummary();
+  });
+
   // ---------- Section 3 ----------
   async function renderDetail() {
     const sec = $('#sec-detail', el);
     const fileSec = $('#sec-file', el);
     sec.hidden = !state.type;
     fileSec.hidden = state.type === 'CANCEL';
-    $('#n-reason', el).textContent = state.type ? '4' : '3';
-    $('#n-file', el).textContent = state.type ? '5' : '4';
+    const base = state.type ? 4 : 3;
+    $('#n-reason', el).textContent = String(base);
+    $('#n-file', el).textContent = String(base + 1);
+    $('#n-appr', el).textContent = String(state.type === 'CANCEL' ? base + 1 : base + 2);
     if (!state.type) return;
 
     if (state.type === 'NEW') {
@@ -290,7 +326,8 @@ export default async function requestNewView({ el, query, navigate, isCurrent })
       <div class="summary-row"><dt>ประเภท</dt><dd>${state.type ? TYPE[state.type].label : html`<span class="muted">ยังไม่เลือก</span>`}</dd></div>
       <div class="summary-row"><dt>เลขที่เอกสาร</dt><dd>${no}</dd></div>
       <div class="summary-row"><dt>Revision</dt><dd>${rev}</dd></div>
-      <div class="summary-row"><dt>ไฟล์แนบ</dt><dd>${state.type === 'CANCEL' ? html`<span class="muted">ไม่ต้องแนบ</span>` : state.file ? html`<span class="small">${fmtSize(state.file.size)}</span>` : html`<span class="muted">ยังไม่แนบ</span>`}</dd></div>`);
+      <div class="summary-row"><dt>ไฟล์แนบ</dt><dd>${state.type === 'CANCEL' ? html`<span class="muted">ไม่ต้องแนบ</span>` : state.file ? html`<span class="small">${fmtSize(state.file.size)}</span>` : html`<span class="muted">ยังไม่แนบ</span>`}</dd></div>
+      <div class="summary-row"><dt>ผู้อนุมัติ</dt><dd>${state.approvals.length ? html`<span class="small">${state.approvals.length} ตำแหน่ง</span>` : html`<span class="muted">ยังไม่เลือก</span>`}</dd></div>`);
   }
 
   function showFieldErr(box, msg, input) {
@@ -351,6 +388,8 @@ export default async function requestNewView({ el, query, navigate, isCurrent })
     const reason = $('#reason', el);
     if (reason.value.trim().length < 5) fail('reason', 'กรุณาใส่เหตุผลในการเปลี่ยนแปลง (อย่างน้อย 5 ตัวอักษร)', reason);
     if (state.type && state.type !== 'CANCEL' && !state.file) fail('file', 'กรุณาแนบไฟล์เอกสาร', $('#file-input', el));
+    state.approvals = readPicker(apprBody);
+    if (!state.approvals.length) fail('appr', 'กรุณาเลือกผู้อนุมัติอย่างน้อย 1 ตำแหน่ง', $('input[name=appr-pos]:not([disabled])', el));
 
     if (errors.length) {
       const box = $('#form-errors', el);
@@ -370,6 +409,7 @@ export default async function requestNewView({ el, query, navigate, isCurrent })
         <div class="row wrap" style="gap:6px">${docNo(state.type === 'NEW' ? (state.nextNo || 'เลขใหม่') : d.docNo)}
           <span class="mono small">${state.type === 'NEW' ? 'Rev.00' : state.type === 'REVISE' ? `${revText(d.rev)} → ${revText(d.rev + 1)}` : `${revText(d.rev)} → ยกเลิก`}</span></div>
         <div style="color:var(--ink)">${title}</div>
+        <div class="small">ผู้อนุมัติ: ${state.approvals.map((a) => `${$(`[data-row="${a.position}"] .appr-check span`, el)?.textContent || a.position} (${a.name})`).join(', ')}</div>
         <div class="small">ระบบจะแจ้งเตือน Admin เพื่อตรวจสอบและส่งต่อผู้อนุมัติ</div></div>`,
       confirmText: 'Submit คำขอ',
     });
@@ -381,6 +421,7 @@ export default async function requestNewView({ el, query, navigate, isCurrent })
     if (state.type === 'NEW') { fd.append('category', state.category); fd.append('title', title); }
     else { fd.append('documentId', String(state.documentId)); if (state.type === 'REVISE') fd.append('title', title); }
     if (state.file && state.type !== 'CANCEL') fd.append('file', state.file, state.file.name);
+    fd.append('approvals', JSON.stringify(state.approvals.map((a) => ({ position: a.position, approverId: a.approverId }))));
 
     const btn = $('#submit-btn', el);
     const bar = $('#up-progress', el);
@@ -412,6 +453,7 @@ export default async function requestNewView({ el, query, navigate, isCurrent })
   // ---------- initial ----------
   renderFile();
   renderSummary();
+  renderApprovers();
   await renderDetail();
   renderSummary();
   if (state.documentId && state.type && state.type !== 'NEW' && !selectedDoc()) {

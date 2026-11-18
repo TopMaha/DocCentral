@@ -1,4 +1,5 @@
 import { html, icon, $, mount, api, setStore, store, toast } from '../core.js';
+import { APP_VERSION } from '../version.js';
 
 const features = [
   ['file-plus', 'ลงทะเบียน · แก้ไข · ยกเลิก', 'ยื่นคำขอออนไลน์ ระบบ run เลขเอกสารให้อัตโนมัติ'],
@@ -36,7 +37,7 @@ export default function loginView({ el, query, navigate }) {
             <div class="input-wrap">
               ${icon('user')}
               <input class="input" id="empId" name="empId" autocomplete="username" autocapitalize="characters"
-                     placeholder="เช่น T-815" required spellcheck="false">
+                     required spellcheck="false">
             </div>
           </div>
           <div class="field">
@@ -50,6 +51,7 @@ export default function loginView({ el, query, navigate }) {
           <label class="check"><input type="checkbox" name="remember" id="remember"> จดจำการเข้าสู่ระบบบนอุปกรณ์นี้</label>
           <button class="btn btn-primary btn-lg btn-block" type="submit" data-busy="กำลังเข้าสู่ระบบ…">${icon('log-in')}เข้าสู่ระบบ</button>
           <p class="help" style="text-align:center">ลืมรหัสผ่าน? ติดต่อ Admin ฝ่าย DCC เพื่อรีเซ็ตรหัสผ่าน</p>
+          <span class="app-version-inline">Version ${APP_VERSION}</span>
         </form>
 
         ${store.settings.publicLibrary ? html`

@@ -1,6 +1,6 @@
 import {
   html, icon, $, $$, mount, api, store, toast, openModal, confirmDialog, withBusy,
-  initials, roleTags, fmtDateTime, emptyState, errorState, ROLE,
+  initials, userTags, fmtDateTime, emptyState, errorState, ROLE, POSITION,
 } from '../core.js';
 
 function tempPasswordModal(user, password) {
@@ -30,6 +30,7 @@ function tempPasswordModal(user, password) {
 
 function userForm(u = null) {
   const roles = u?.roles || [];
+  const positions = u?.positions || [];
   return html`<form id="user-form" class="stack" novalidate>
     <div class="notice notice-err" id="uf-err" role="alert" hidden></div>
     <div class="form-grid cols-2">
@@ -55,10 +56,23 @@ function userForm(u = null) {
       <legend class="label" style="margin-bottom:4px">สิทธิ์การใช้งาน</legend>
       <p class="help" style="margin-bottom:10px">ผู้ใช้ทุกคนยื่นคำขอและดาวน์โหลดเอกสารได้อยู่แล้ว เลือกสิทธิ์เพิ่มเติมตามหน้าที่</p>
       <div class="choice-grid">
-        ${Object.entries(ROLE).map(([k, r]) => html`<label class="choice compact">
+        ${Object.entries(ROLE).filter(([k]) => k !== 'approver').map(([k, r]) => html`<label class="choice compact">
           <input type="checkbox" name="roles" value="${k}" ${roles.includes(k) ? 'checked' : ''} ${u?.id === store.user.id && k === 'admin' ? 'disabled' : ''}>
-          <span class="choice-icon">${icon(k === 'admin' ? 'shield-check' : k === 'approver' ? 'stamp' : 'hash')}</span>
+          <span class="choice-icon">${icon(k === 'admin' ? 'shield-check' : 'hash')}</span>
           <span><span class="choice-title">${r.label}</span><span class="choice-desc" style="display:block">${r.desc}</span></span>
+          <span class="choice-tick">${icon('check', 'ic-sm')}</span>
+        </label>`)}
+      </div>
+    </fieldset>
+    <fieldset style="border:0;margin:0;padding:0">
+      <legend class="label" style="margin-bottom:4px">ตำแหน่งผู้อนุมัติ</legend>
+      <p class="help" style="margin-bottom:10px">ติ๊กตำแหน่งที่คนนี้ดำรงอยู่ — ผู้ขอจะเลือกได้ว่าตำแหน่งไหนต้องอนุมัติคำขอ และคนในตำแหน่งนั้นจะอนุมัติ / ไม่อนุมัติได้ (เลือกได้มากกว่า 1)</p>
+      ${u?.roles.includes('approver') && !positions.length ? html`<div class="notice notice-warn" style="margin-bottom:10px">${icon('triangle-alert')}<div>ผู้ใช้นี้เป็น “ผู้อนุมัติ” แบบเดิม — กรุณาเลือกตำแหน่ง ไม่เช่นนั้นสิทธิ์ผู้อนุมัติจะถูกถอดเมื่อบันทึก</div></div>` : ''}
+      <div class="choice-grid">
+        ${Object.entries(POSITION).map(([k, label]) => html`<label class="choice compact">
+          <input type="checkbox" name="positions" value="${k}" ${positions.includes(k) ? 'checked' : ''}>
+          <span class="choice-icon">${icon('stamp')}</span>
+          <span><span class="choice-title">${label}</span></span>
           <span class="choice-tick">${icon('check', 'ic-sm')}</span>
         </label>`)}
       </div>
@@ -73,7 +87,7 @@ export default async function usersView({ el, isCurrent }) {
 
   mount(el, html`
     <div class="page-head">
-      <div><h1>จัดการผู้ใช้</h1><p>เพิ่มพนักงาน กำหนดสิทธิ์ Admin / ผู้อนุมัติ / DCC และรีเซ็ตรหัสผ่าน</p></div>
+      <div><h1>จัดการผู้ใช้</h1><p>เพิ่มพนักงาน กำหนดสิทธิ์ Admin / DCC ตำแหน่งผู้อนุมัติ และรีเซ็ตรหัสผ่าน</p></div>
       <button class="btn btn-primary" id="add-user">${icon('user-plus')}เพิ่มผู้ใช้</button>
     </div>
     <div class="toolbar"><div class="input-wrap search">${icon('search')}
@@ -90,7 +104,17 @@ export default async function usersView({ el, isCurrent }) {
       mount(list, html`<div class="card">${emptyState({ iconName: 'users', title: 'ไม่พบผู้ใช้', text: 'ลองค้นหาด้วยคำอื่น' })}</div>`);
       return;
     }
-    mount(list, html`<p class="xs muted" style="margin:0 0 10px">${shown.length} คน · ผู้อนุมัติ ${users.filter((u) => u.active && u.roles.includes('approver')).length} · DCC ${users.filter((u) => u.active && u.roles.includes('dcc')).length}</p>
+    const active = users.filter((u) => u.active);
+    mount(list, html`<section class="card card-pad stack-sm" aria-labelledby="pos-h" style="margin-bottom:16px">
+        <h2 id="pos-h" style="font-size:16px">ผู้อนุมัติตามตำแหน่ง</h2>
+        <p class="help">ผู้ขอเลือกได้ว่าตำแหน่งไหนต้องอนุมัติ — กำหนดคนในแต่ละตำแหน่งได้ที่ปุ่มแก้ไข ${icon('pencil', 'ic-sm')} ของผู้ใช้</p>
+        <ul class="pos-summary">${Object.entries(POSITION).map(([k, label]) => {
+          const holders = active.filter((u) => u.positions.includes(k));
+          return html`<li><span class="pos-name">${icon('stamp', 'ic-sm')}${label}</span>
+            <span>${holders.length ? holders.map((u) => u.name).join(', ') : html`<span class="tag tag-amber">${icon('triangle-alert', 'ic-sm')}ยังไม่ได้กำหนด</span>`}</span></li>`;
+        })}</ul>
+      </section>
+      <p class="xs muted" style="margin:0 0 10px">${shown.length} คน · ผู้อนุมัติ ${active.filter((u) => u.positions.length).length} · DCC ${active.filter((u) => u.roles.includes('dcc')).length}</p>
       <div class="card" style="overflow:hidden"><ul class="list">
       ${shown.map((u) => html`<li><div class="list-item" style="${u.active ? '' : 'opacity:.6'}">
         <span class="avatar" aria-hidden="true">${initials(u.name)}</span>
@@ -98,7 +122,7 @@ export default async function usersView({ el, isCurrent }) {
           <div class="li-top"><b>${u.name}</b><span class="xs mono muted">${u.empId}</span>${u.active ? '' : html`<span class="tag tag-red">ระงับ</span>`}${u.mustChangePw ? html`<span class="tag">รอตั้งรหัสผ่าน</span>` : ''}</div>
           <div class="li-meta">${u.department ? html`<span>${icon('building-2', 'ic-sm')} ${u.department}</span>` : ''}${u.email ? html`<span>${icon('mail', 'ic-sm')} ${u.email}</span>` : ''}
             <span>เข้าระบบล่าสุด ${u.lastLogin ? fmtDateTime(u.lastLogin) : '—'}</span></div>
-          <div class="row wrap" style="gap:4px;margin-top:6px">${u.roles.length ? roleTags(u.roles) : html`<span class="tag">ผู้ใช้ทั่วไป</span>`}</div>
+          <div class="row wrap" style="gap:4px;margin-top:6px">${u.roles.length || u.positions.length ? userTags(u) : html`<span class="tag">ผู้ใช้ทั่วไป</span>`}</div>
         </div>
         <div class="row" style="gap:4px;flex:none">
           <button class="btn btn-ghost btn-icon" data-edit="${u.id}" aria-label="แก้ไข ${u.name}" title="แก้ไข">${icon('pencil')}</button>
@@ -124,6 +148,7 @@ export default async function usersView({ el, isCurrent }) {
       department: form.department.value.trim(),
       email: form.email.value.trim(),
       roles: $$('input[name=roles]:checked', form).map((x) => x.value),
+      positions: $$('input[name=positions]:checked', form).map((x) => x.value),
       ...(form.active ? { active: form.active.checked } : {}),
     };
   }

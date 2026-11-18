@@ -3,11 +3,12 @@ import {
   docNo, fileExt, fmtDate, fmtDateTime, fmtSize, revText, statusPill, emptyState, errorState,
   TYPE, todayISO, initials,
 } from '../core.js';
+import { loadPositions, approverPicker, wirePicker, readPicker } from '../approvers.js';
 
 const LOG = {
   SUBMIT: ['send', 'ส่งคำขอ', 'info'],
   FORWARD: ['send', 'Admin ตรวจสอบแล้ว ส่งต่อผู้อนุมัติ', 'ok'],
-  REASSIGN: ['users', 'เปลี่ยนผู้อนุมัติ', 'info'],
+  REASSIGN: ['users', 'แก้ไขผู้อนุมัติ', 'info'],
   APPROVE: ['stamp', 'อนุมัติ', 'ok'],
   REJECT: ['circle-x', 'ไม่อนุมัติ', 'bad'],
   WITHDRAW: ['undo-2', 'ผู้ขอยกเลิกคำขอ', 'bad'],
@@ -16,7 +17,8 @@ const LOG = {
 };
 
 function steps(r, logs) {
-  const reachedApproval = !!r.approver;
+  const reachedApproval = logs.some((l) => l.action === 'FORWARD');
+  const approved = r.approvals.filter((a) => a.status === 'APPROVED').length;
   const order = { PENDING_REVIEW: 1, PENDING_APPROVAL: 2, APPROVED: 3, PUBLISHED: 4 };
   let at = order[r.status];
   let failedAt = null;
@@ -29,7 +31,7 @@ function steps(r, logs) {
   const defs = [
     { icon: 'send', label: 'ส่งคำขอ', sub: fmtDate(r.createdAt) },
     { icon: 'clipboard-list', label: 'Admin ตรวจสอบ', sub: when('FORWARD') ? fmtDate(when('FORWARD')) : '' },
-    { icon: 'stamp', label: 'อนุมัติ', sub: r.approver?.name || '' },
+    { icon: 'stamp', label: 'อนุมัติ', sub: r.approvals.length ? `${approved}/${r.approvals.length} ตำแหน่ง` : '' },
     { icon: 'hash', label: r.type === 'CANCEL' ? 'DCC ยกเลิกใช้' : 'DCC ประกาศใช้', sub: r.dcnNo || '' },
   ];
   return html`<ol class="tracker" aria-label="ขั้นตอนของคำขอ">${defs.map((d, i) => {
@@ -60,8 +62,30 @@ function filesFlow(r) {
   return html`<div class="flow-files">${rows}</div>`;
 }
 
+/** สถานะผู้อนุมัติแต่ละตำแหน่ง */
+function approvalList(r) {
+  if (!r.approvals.length) return html`<p class="small muted">ยังไม่ได้เลือกผู้อนุมัติ</p>`;
+  const waiting = r.status === 'PENDING_APPROVAL' ? 'รออนุมัติ' : r.status === 'PENDING_REVIEW' ? 'รอ Admin ส่งต่อ' : 'ไม่ได้พิจารณา';
+  const ST = {
+    APPROVED: ['circle-check', 'อนุมัติแล้ว', 'ok'],
+    REJECTED: ['circle-x', 'ไม่อนุมัติ', 'bad'],
+    PENDING: ['clock', waiting, 'wait'],
+  };
+  return html`<ul class="appr-status">${r.approvals.map((a) => {
+    const [ic, text, tone] = ST[a.status] || ST.PENDING;
+    return html`<li class="${tone}">
+      <span class="as-ic">${icon(ic)}</span>
+      <div class="grow">
+        <div class="as-top"><b>${a.positionLabel}</b><span class="as-state">${text}</span></div>
+        <div class="small">${a.approver.name}${a.approver.id === store.user.id ? ' (คุณ)' : ''}</div>
+        ${a.decidedAt ? html`<div class="xs muted">${fmtDateTime(a.decidedAt)}</div>` : ''}
+        ${a.comment ? html`<div class="tl-comment">${a.comment}</div>` : ''}</div>
+    </li>`;
+  })}</ul>`;
+}
+
 export default async function requestDetailView({ el, params, isCurrent }) {
-  let approvers = null;
+  let positions = null;
 
   async function load() {
     mount(el, html`<div class="card card-pad" aria-busy="true">${Array.from({ length: 6 }, () => html`<div class="skeleton sk-line" style="height:18px;margin:16px 0"></div>`)}</div>`);
@@ -98,10 +122,10 @@ export default async function requestDetailView({ el, params, isCurrent }) {
 
     if (a.includes('forward')) {
       blocks.push(html`<section class="card card-pad action-card stack" aria-labelledby="ac-forward">
-        <div class="ac-head"><span class="ac-icon">${icon('clipboard-list')}</span><div><h2 id="ac-forward" style="font-size:17px">ตรวจสอบคำขอ (Admin)</h2><p class="small muted">ตรวจสอบความครบถ้วน แล้วส่งต่อให้ผู้อนุมัติ</p></div></div>
+        <div class="ac-head"><span class="ac-icon">${icon('clipboard-list')}</span><div><h2 id="ac-forward" style="font-size:17px">ตรวจสอบคำขอ (Admin)</h2><p class="small muted">ตรวจสอบความครบถ้วนและผู้อนุมัติที่ผู้ขอเลือก (ปรับได้) แล้วส่งต่อ — ผู้อนุมัติทุกคนได้รับแจ้งพร้อมกัน</p></div></div>
         <div class="field">
-          <label class="label" for="approver">ผู้อนุมัติ <span class="req">*</span></label>
-          <select class="select" id="approver"><option value="">กำลังโหลด…</option></select>
+          <span class="label">ผู้อนุมัติ <span class="req">*</span></span>
+          <div id="appr-picker"><div class="skeleton" style="height:200px;border-radius:14px"></div></div>
           <div class="error-text" id="err-approver" hidden></div>
         </div>
         <div class="field">
@@ -117,7 +141,7 @@ export default async function requestDetailView({ el, params, isCurrent }) {
 
     if (a.includes('approve')) {
       blocks.push(html`<section class="card card-pad action-card stack" aria-labelledby="ac-approve">
-        <div class="ac-head"><span class="ac-icon">${icon('stamp')}</span><div><h2 id="ac-approve" style="font-size:17px">พิจารณาอนุมัติ</h2><p class="small muted">คุณได้รับมอบหมายให้อนุมัติคำขอนี้</p></div></div>
+        <div class="ac-head"><span class="ac-icon">${icon('stamp')}</span><div><h2 id="ac-approve" style="font-size:17px">พิจารณาอนุมัติ</h2><p class="small muted">คุณได้รับมอบหมายในตำแหน่ง <b>${r.approvals.filter((x) => x.status === 'PENDING' && x.approver.id === store.user.id).map((x) => x.positionLabel).join(', ')}</b></p></div></div>
         <div class="field">
           <label class="label" for="ap-comment">ความเห็น (ถ้ามี)</label>
           <textarea class="textarea" id="ap-comment" rows="2" style="min-height:76px"></textarea>
@@ -151,13 +175,11 @@ export default async function requestDetailView({ el, params, isCurrent }) {
 
     if (a.includes('reassign')) {
       blocks.push(html`<section class="card card-pad stack" aria-labelledby="ac-re">
-        <h2 id="ac-re" style="font-size:16px">เปลี่ยนผู้อนุมัติ (Admin)</h2>
-        <div class="row wrap" style="align-items:flex-end">
-          <div class="field grow" style="min-width:200px"><label class="label" for="approver">ผู้อนุมัติใหม่</label>
-            <select class="select" id="approver"><option value="">กำลังโหลด…</option></select></div>
-          <button class="btn" id="btn-forward" data-busy="กำลังบันทึก…">${icon('users')}เปลี่ยนผู้อนุมัติ</button>
-        </div>
+        <h2 id="ac-re" style="font-size:16px">แก้ไขผู้อนุมัติ (Admin)</h2>
+        <p class="small muted">เพิ่ม/ลดตำแหน่ง หรือเปลี่ยนคน — คนที่อนุมัติแล้วและไม่ได้เปลี่ยนตัว ผลอนุมัติยังอยู่</p>
+        <div id="appr-picker"><div class="skeleton" style="height:200px;border-radius:14px"></div></div>
         <div class="error-text" id="err-approver" hidden></div>
+        <div class="action-buttons"><button class="btn" id="btn-forward" data-busy="กำลังบันทึก…">${icon('users')}บันทึกผู้อนุมัติ</button></div>
       </section>`);
     }
     return blocks;
@@ -200,7 +222,6 @@ export default async function requestDetailView({ el, params, isCurrent }) {
                 <div><dt>แผนก</dt><dd>${r.requester.department || '—'}</dd></div>
                 <div><dt>หมวดเอกสาร</dt><dd>${r.category} · ${r.categoryName || ''}</dd></div>
                 <div><dt>วันที่ยื่น</dt><dd>${fmtDateTime(r.createdAt)}</dd></div>
-                <div><dt>ผู้อนุมัติ</dt><dd>${r.approver?.name || html`<span class="muted">รอ Admin มอบหมาย</span>`}</dd></div>
                 <div><dt>DCN No.</dt><dd class="mono">${r.dcnNo || '—'}</dd></div>
                 ${r.effectiveDate ? html`<div><dt>วันที่มีผล</dt><dd>${fmtDate(r.effectiveDate)}</dd></div>` : ''}
               </dl>
@@ -225,6 +246,12 @@ export default async function requestDetailView({ el, params, isCurrent }) {
             </section>` : ''}
           </div>
 
+          <div class="stack">
+          <section class="card card-pad" aria-labelledby="h-appr">
+            <h2 id="h-appr" style="font-size:17px;margin-bottom:12px">ผู้อนุมัติ
+              ${r.approvals.length ? html`<span class="small muted" style="font-weight:400"> · อนุมัติแล้ว ${r.approvals.filter((a) => a.status === 'APPROVED').length}/${r.approvals.length}</span>` : ''}</h2>
+            ${approvalList(r)}
+          </section>
           <section class="card card-pad" aria-labelledby="h-log">
             <h2 id="h-log" style="font-size:17px;margin-bottom:16px">ประวัติการดำเนินการ</h2>
             <ol class="timeline">
@@ -239,49 +266,53 @@ export default async function requestDetailView({ el, params, isCurrent }) {
               })}
             </ol>
           </section>
+          </div>
         </div>
       </div>`);
 
     wire(r);
   }
 
-  async function fillApprovers(r) {
-    const sel = $('#approver', el);
-    if (!sel) return;
+  /** ตารางเลือกผู้อนุมัติสำหรับ Admin (ส่งต่อ / แก้ไขผู้อนุมัติ) เติมค่าตามที่ผู้ขอเลือกไว้ */
+  async function fillPicker(r) {
+    const box = $('#appr-picker', el);
+    if (!box) return;
     try {
-      approvers ??= (await api('/meta/approvers')).approvers;
+      positions ??= await loadPositions();
     } catch (err) {
-      mount(sel, html`<option value="">โหลดรายชื่อไม่สำเร็จ</option>`);
+      mount(box, html`<div class="notice notice-err">${icon('circle-alert')}<div>โหลดรายชื่อผู้อนุมัติไม่สำเร็จ: ${err.message}</div></div>`);
       return;
     }
-    const usable = approvers.filter((x) => x.id !== r.requester.id);
-    mount(sel, html`<option value="">— เลือกผู้อนุมัติ —</option>
-      ${usable.map((x) => html`<option value="${x.id}" ${r.approver?.id === x.id ? 'selected' : ''}>${x.name}</option>`)}`);
-    if (!usable.length) {
-      const err = $('#err-approver', el);
-      err.hidden = false;
-      mount(err, html`${icon('circle-alert', 'ic-sm')}<span>ยังไม่มีผู้ใช้ที่มีสิทธิ์ผู้อนุมัติ (นอกจากผู้ขอ) — เพิ่มได้ที่เมนูจัดการผู้ใช้</span>`);
-    }
+    if (!isCurrent() || !box.isConnected) return;
+    mount(box, approverPicker(positions, {
+      requesterId: r.requester.id,
+      selected: r.approvals.map((a) => ({ position: a.position, approverId: a.approver.id, status: a.status })),
+    }));
+    wirePicker(box, () => { $('#err-approver', el).hidden = true; });
   }
 
   function wire(r) {
-    fillApprovers(r);
+    fillPicker(r);
     $('#btn-forward', el)?.addEventListener('click', (e) => {
-      const sel = $('#approver', el);
-      if (!sel.value) {
+      const box = $('#appr-picker', el);
+      const list = box ? readPicker(box) : [];
+      if (!list.length) {
         const err = $('#err-approver', el);
         err.hidden = false;
-        mount(err, html`${icon('circle-alert', 'ic-sm')}<span>กรุณาเลือกผู้อนุมัติ</span>`);
-        sel.setAttribute('aria-invalid', 'true');
-        sel.focus();
+        mount(err, html`${icon('circle-alert', 'ic-sm')}<span>กรุณาเลือกผู้อนุมัติอย่างน้อย 1 ตำแหน่ง</span>`);
+        $('input[name=appr-pos]:not([disabled])', el)?.focus();
         return;
       }
-      const name = sel.options[sel.selectedIndex].text;
-      act(e.currentTarget, 'forward', { approverId: Number(sel.value), comment: $('#fw-comment', el)?.value || '' },
-        r.status === 'PENDING_APPROVAL' ? `เปลี่ยนผู้อนุมัติเป็น ${name} แล้ว` : `ส่งต่อให้ ${name} แล้ว — แจ้งเตือนผู้อนุมัติเรียบร้อย`);
+      const names = list.map((x) => x.name).join(', ');
+      act(e.currentTarget, 'forward', {
+        approvals: list.map((x) => ({ position: x.position, approverId: x.approverId })),
+        comment: $('#fw-comment', el)?.value || '',
+      }, r.status === 'PENDING_APPROVAL' ? 'บันทึกผู้อนุมัติแล้ว' : `ส่งต่อให้ ${names} แล้ว — แจ้งเตือนผู้อนุมัติเรียบร้อย`);
     });
     $('#btn-approve', el)?.addEventListener('click', (e) => {
-      act(e.currentTarget, 'approve', { comment: $('#ap-comment', el).value }, 'อนุมัติแล้ว — แจ้งเตือน DCC ให้ run DCN No. เรียบร้อย');
+      const last = r.approvals.filter((a) => a.status !== 'APPROVED').every((a) => a.approver.id === store.user.id);
+      act(e.currentTarget, 'approve', { comment: $('#ap-comment', el).value },
+        last ? 'อนุมัติแล้ว (ครบทุกตำแหน่ง) — แจ้งเตือน DCC ให้ run DCN No. เรียบร้อย' : 'อนุมัติแล้ว — รอผู้อนุมัติตำแหน่งอื่น');
     });
     $('#btn-reject', el)?.addEventListener('click', async (e) => {
       const btn = e.currentTarget;

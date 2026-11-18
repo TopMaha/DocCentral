@@ -1,5 +1,6 @@
 import { HttpError, cfg, cookie, parseCookies, one, run } from './http.js';
 import { hashPassword, verifyPassword, randomToken, sha256Hex, PBKDF2_ITERATIONS } from './crypto.js';
+import { positionsOf } from './positions.js';
 
 export const COOKIE = 'dcc_sid';
 
@@ -10,11 +11,12 @@ export function rolesOf(user) {
   return String(user?.roles || '').split(',').map((r) => r.trim()).filter(Boolean);
 }
 
-/** admin ทำงานแทน DCC ได้; ผู้อนุมัติต้องมีสิทธิ์ approver โดยตรง */
+/** admin ทำงานแทน DCC ได้; ผู้อนุมัติ = ผู้ที่ดำรงตำแหน่งผู้อนุมัติ (QA Manager ฯลฯ) */
 export function can(user, role) {
   if (!user) return false;
   const r = rolesOf(user);
   if (role === 'dcc') return r.includes('dcc') || r.includes('admin');
+  if (role === 'approver') return r.includes('approver') || positionsOf(user).length > 0;
   return r.includes(role);
 }
 
@@ -29,6 +31,7 @@ export function publicUser(u) {
     department: u.department || '',
     email: u.email || '',
     roles: rolesOf(u),
+    positions: positionsOf(u),
     active: !!u.active,
     mustChangePw: !!u.must_change_pw,
     lastLogin: u.last_login || null,

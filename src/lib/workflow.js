@@ -4,6 +4,7 @@ import { notify, usersWithRole } from './notify.js';
 import {
   savePending, moveObject, publishedName, controlledKey, obsoleteKey, baseName, extOf, mimeFor,
 } from './files.js';
+import { POSITIONS, positionLabel, positionOrder, positionsOf } from './positions.js';
 
 export const TYPES = { NEW: 'ลงทะเบียนใหม่', REVISE: 'แก้ไข (Up Rev.)', CANCEL: 'ยกเลิกเอกสาร' };
 export const STATUS = {
@@ -44,9 +45,70 @@ async function batch(c, stmts) {
 }
 
 async function getRequest(c, id) {
-  const r = await one(c.env, 'SELECT * FROM requests WHERE id = ?', Number(id));
+  const r = withApprovals(await one(c.env, `${REQUEST_SELECT} WHERE q.id = ?`, Number(id)));
   if (!r) throw new HttpError(404, 'ไม่พบคำขอ');
   return r;
+}
+
+// ---------------------------------------------------------------- ผู้อนุมัติตามตำแหน่ง
+/** แปลง approvals_json (จาก REQUEST_SELECT) เป็น r.approvals เรียงตามลำดับตำแหน่ง */
+export function withApprovals(q) {
+  if (!q || Array.isArray(q.approvals)) return q;
+  let list = [];
+  try { list = JSON.parse(q.approvals_json || '[]'); } catch { /* ข้อมูลเสีย ถือว่าไม่มี */ }
+  q.approvals = list.sort((a, b) => positionOrder(a.position) - positionOrder(b.position));
+  return q;
+}
+
+const pendingOf = (r, userId) => (r.approvals || []).filter((a) => a.status === 'PENDING' && a.approverId === userId);
+const describe = (list) => list.map((x) => `${positionLabel(x.position)}: ${x.name}`).join(', ');
+
+/**
+ * ตรวจรายการผู้อนุมัติ [{ position, approverId }] ที่ผู้ขอ/Admin เลือก
+ * ต้องมีอย่างน้อย 1 ตำแหน่ง, ไม่ซ้ำ, ผู้อนุมัติต้องดำรงตำแหน่งนั้นจริง และต้องไม่ใช่ผู้ขอ
+ */
+async function cleanApprovals(c, input, requesterId) {
+  let list = input;
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list); } catch { list = null; }
+  }
+  if (!Array.isArray(list)) list = [];
+  const holders = await all(c.env, "SELECT id, name, positions FROM users WHERE active = 1 AND positions <> ''");
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    const position = String(item?.position || '');
+    if (!POSITIONS[position]) throw new HttpError(400, 'ตำแหน่งผู้อนุมัติไม่ถูกต้อง');
+    if (seen.has(position)) throw new HttpError(400, `เลือกตำแหน่ง ${POSITIONS[position]} ซ้ำ`);
+    seen.add(position);
+    const u = holders.find((h) => h.id === Number(item?.approverId));
+    if (!u) throw new HttpError(400, `กรุณาเลือกผู้อนุมัติของตำแหน่ง ${POSITIONS[position]}`);
+    if (!positionsOf(u).includes(position)) throw new HttpError(400, `${u.name} ไม่ได้ดำรงตำแหน่ง ${POSITIONS[position]}`);
+    if (u.id === requesterId) throw new HttpError(400, `ผู้อนุมัติ (${POSITIONS[position]}) ต้องไม่ใช่ผู้ขอ (แยกหน้าที่ตามระบบควบคุมเอกสาร)`);
+    out.push({ position, approverId: u.id, name: u.name });
+  }
+  if (!out.length) throw new HttpError(400, 'กรุณาเลือกผู้อนุมัติอย่างน้อย 1 ตำแหน่ง');
+  return out.sort((a, b) => positionOrder(a.position) - positionOrder(b.position));
+}
+
+/** ตั้งสถานะคำขอตามผลอนุมัติ: ครบทุกคน → APPROVED, ยังไม่ครบ → คงสถานะ (หรือ PENDING_APPROVAL ตอนส่งต่อ) */
+const settleStmt = (c, requestId, notDoneStatus = 'status') => prep(c, `
+  UPDATE requests SET status = CASE
+      WHEN EXISTS (SELECT 1 FROM request_approvals WHERE request_id = ?1 AND status <> 'APPROVED') THEN ${notDoneStatus}
+      ELSE 'APPROVED' END,
+    updated_at = datetime('now')
+  WHERE id = ?1 RETURNING status`, requestId);
+
+async function notifyApproved(c, r) {
+  await notify(c, await usersWithRole(c.env, 'dcc'), {
+    requestId: r.id, kind: 'publish',
+    title: `อนุมัติครบแล้ว รอ Run DCN No.: ${r.doc_no}`,
+    body: `${label(r)} — กรุณา Run DCN No. และประกาศใช้เอกสาร`,
+    link: link(r.id),
+  }, c.user.id);
+  await notify(c, [r.requester_id], {
+    requestId: r.id, kind: 'success', title: `คำขอ ${r.req_no} ได้รับการอนุมัติครบแล้ว`, body: 'ผู้อนุมัติทุกตำแหน่งอนุมัติแล้ว รอ DCC ประกาศใช้', link: link(r.id),
+  }, c.user.id);
 }
 
 // ---------------------------------------------------------------- สิทธิ์
@@ -56,7 +118,7 @@ export function actionsFor(user, r) {
   const admin = can(user, 'admin');
   if (r.status === 'PENDING_REVIEW' && admin) a.push('forward', 'reject');
   if (r.status === 'PENDING_APPROVAL') {
-    if (r.approver_id === user.id) a.push('approve', 'reject');
+    if (pendingOf(r, user.id).length) a.push('approve', 'reject');
     if (admin) a.push('reassign');
   }
   if (r.status === 'APPROVED' && can(user, 'dcc')) a.push(r.dcn_no ? 'publish' : 'dcn');
@@ -65,7 +127,7 @@ export function actionsFor(user, r) {
 }
 
 export function canView(user, r) {
-  return r.requester_id === user.id || r.approver_id === user.id
+  return r.requester_id === user.id || (r.approvals || []).some((a) => a.approverId === user.id)
     || can(user, 'admin') || can(user, 'dcc') || can(user, 'approver');
 }
 
@@ -94,6 +156,8 @@ export async function createRequest(c, form) {
     const busy = await one(c.env, `SELECT req_no FROM requests WHERE document_id = ? AND status IN (${ACTIVE_SQL})`, doc.id);
     if (busy) throw new HttpError(409, `เอกสารนี้มีคำขอ ${busy.req_no} กำลังดำเนินการอยู่ กรุณารอให้เสร็จก่อน`);
   }
+
+  const approvals = await cleanApprovals(c, form.get('approvals'), user.id);
 
   const file = form.get('file');
   if (type !== 'CANCEL' && (!file || typeof file === 'string' || !file.size)) throw new HttpError(400, 'กรุณาแนบไฟล์เอกสาร');
@@ -130,9 +194,14 @@ export async function createRequest(c, form) {
     type, user.id, title, reason, up?.key, up?.name, up?.size, up?.mime, doc.id);
   }
 
+  // ผู้อนุมัติที่ผู้ขอเลือก (ถ้า insert คำขอไม่สำเร็จ จะไม่มีแถวให้ SELECT จึงไม่ถูกเพิ่ม)
+  const approvalStmts = approvals.map((x) => prep(c,
+    `INSERT INTO request_approvals (request_id, position, approver_id) SELECT id, ?, ? FROM requests WHERE req_no = ${reqNo}`,
+    x.position, x.approverId));
+
   let created;
   try {
-    const res = await batch(c, [bump, insert]);
+    const res = await batch(c, [bump, insert, ...approvalStmts]);
     created = res[1].results?.[0];
     if (!created) throw new HttpError(409, 'เอกสารถูกเปลี่ยนสถานะระหว่างยื่นคำขอ กรุณาลองใหม่');
     await prep(c, 'INSERT INTO request_logs (request_id, actor_id, action, comment) VALUES (?, ?, ?, ?)', created.id, user.id, 'SUBMIT', reason).run();
@@ -152,50 +221,70 @@ export async function createRequest(c, form) {
 }
 
 // ---------------------------------------------------------------- Admin → ผู้อนุมัติ
-export async function forward(c, id, approverId, comment = '') {
+/**
+ * Admin ส่งต่อคำขอ (PENDING_REVIEW) หรือแก้ไขผู้อนุมัติ (PENDING_APPROVAL)
+ * @param input [{ position, approverId }] — ตำแหน่งที่ต้องอนุมัติ (ปรับจากที่ผู้ขอเลือกได้)
+ * ผู้อนุมัติทุกคนได้รับแจ้งพร้อมกัน; คนที่อนุมัติแล้วและไม่ได้เปลี่ยนตัว ผลอนุมัติยังคงอยู่
+ */
+export async function forward(c, id, input, comment = '') {
   const r = await getRequest(c, id);
   const reassign = r.status === 'PENDING_APPROVAL';
   need(c.user, r, reassign ? 'reassign' : 'forward', 'คำขอนี้ไม่อยู่ในขั้นตอนที่ส่งต่อได้');
-  const approver = await one(c.env,
-    "SELECT * FROM users WHERE id = ? AND active = 1 AND (',' || roles || ',') LIKE '%,approver,%'", Number(approverId));
-  if (!approver) throw new HttpError(400, 'กรุณาเลือกผู้อนุมัติ');
-  if (approver.id === r.requester_id) throw new HttpError(400, 'ผู้อนุมัติต้องไม่ใช่ผู้ขอ (แยกหน้าที่ตามระบบควบคุมเอกสาร)');
+  const list = await cleanApprovals(c, input, r.requester_id);
 
-  await batch(c, [
-    guard(c, 'EXISTS (SELECT 1 FROM requests WHERE id = ? AND status = ?)', r.id, r.status),
-    prep(c, "UPDATE requests SET status = 'PENDING_APPROVAL', approver_id = ?, updated_at = datetime('now') WHERE id = ?", approver.id, r.id),
-    logStmt(c, r.id, c.user.id, reassign ? 'REASSIGN' : 'FORWARD', `ผู้อนุมัติ: ${approver.name}${comment ? ` — ${comment}` : ''}`),
-  ]);
-  await notify(c, [approver], {
-    requestId: r.id, kind: 'approval',
-    title: `รออนุมัติ: ${TYPES[r.type]} ${r.doc_no}`,
-    body: `${label(r)} — กรุณาพิจารณาอนุมัติหรือไม่อนุมัติ`,
-    link: link(r.id),
-  });
+  const stmts = [guard(c, 'EXISTS (SELECT 1 FROM requests WHERE id = ? AND status = ?)', r.id, r.status)];
+  const toNotify = [];
+  for (const a of r.approvals) {
+    if (!list.some((x) => x.position === a.position)) stmts.push(prep(c, 'DELETE FROM request_approvals WHERE id = ?', a.id));
+  }
+  for (const x of list) {
+    const old = r.approvals.find((a) => a.position === x.position);
+    if (!old) {
+      stmts.push(prep(c, 'INSERT INTO request_approvals (request_id, position, approver_id) VALUES (?, ?, ?)', r.id, x.position, x.approverId));
+      toNotify.push(x.approverId);
+    } else if (old.approverId !== x.approverId) {
+      stmts.push(prep(c, "UPDATE request_approvals SET approver_id = ?, status = 'PENDING', comment = '', decided_at = NULL WHERE id = ?", x.approverId, old.id));
+      toNotify.push(x.approverId);
+    } else if (!reassign && old.status === 'PENDING') {
+      toNotify.push(x.approverId);
+    }
+  }
+  const settleAt = stmts.length;
+  stmts.push(settleStmt(c, r.id, "'PENDING_APPROVAL'"));
+  stmts.push(logStmt(c, r.id, c.user.id, reassign ? 'REASSIGN' : 'FORWARD', `ผู้อนุมัติ: ${describe(list)}${comment ? ` — ${comment}` : ''}`));
+  const res = await batch(c, stmts);
+  const status = res[settleAt].results?.[0]?.status;
+
+  if (status === 'PENDING_APPROVAL' && toNotify.length) {
+    await notify(c, toNotify, {
+      requestId: r.id, kind: 'approval',
+      title: `รออนุมัติ: ${TYPES[r.type]} ${r.doc_no}`,
+      body: `${label(r)} — กรุณาพิจารณาอนุมัติหรือไม่อนุมัติ${comment ? ` (หมายเหตุจาก Admin: ${comment})` : ''}`,
+      link: link(r.id),
+    });
+  }
   if (!reassign) {
     await notify(c, [r.requester_id], {
-      requestId: r.id, title: `คำขอ ${r.req_no} ผ่านการตรวจสอบ`, body: `ส่งต่อให้ ${approver.name} พิจารณาอนุมัติแล้ว`, link: link(r.id),
+      requestId: r.id, title: `คำขอ ${r.req_no} ผ่านการตรวจสอบ`, body: `ส่งต่อให้ ${describe(list)} พิจารณาอนุมัติแล้ว`, link: link(r.id),
     }, c.user.id);
   }
+  if (status === 'APPROVED') await notifyApproved(c, r);
 }
 
+/** ผู้อนุมัติกดอนุมัติ — อนุมัติทุกตำแหน่งที่ตนได้รับมอบหมายในคำขอนี้; ครบทุกตำแหน่งแล้วคำขอจึงเป็น APPROVED */
 export async function approve(c, id, comment = '') {
   const r = await getRequest(c, id);
   need(c.user, r, 'approve', 'คุณไม่ใช่ผู้อนุมัติของคำขอนี้ หรือคำขอไม่อยู่ในขั้นตอนอนุมัติ');
-  await batch(c, [
-    guard(c, "EXISTS (SELECT 1 FROM requests WHERE id = ? AND status = 'PENDING_APPROVAL' AND approver_id = ?)", r.id, c.user.id),
-    prep(c, "UPDATE requests SET status = 'APPROVED', updated_at = datetime('now') WHERE id = ?", r.id),
-    logStmt(c, r.id, c.user.id, 'APPROVE', comment),
+  const mine = pendingOf(r, c.user.id).map((a) => positionLabel(a.position)).join(', ');
+  const res = await batch(c, [
+    guard(c, `EXISTS (SELECT 1 FROM requests WHERE id = ?1 AND status = 'PENDING_APPROVAL')
+      AND EXISTS (SELECT 1 FROM request_approvals WHERE request_id = ?1 AND approver_id = ?2 AND status = 'PENDING')`, r.id, c.user.id),
+    prep(c, "UPDATE request_approvals SET status = 'APPROVED', comment = ?, decided_at = datetime('now') WHERE request_id = ? AND approver_id = ? AND status = 'PENDING'",
+      comment, r.id, c.user.id),
+    settleStmt(c, r.id),
+    logStmt(c, r.id, c.user.id, 'APPROVE', `${mine}${comment ? ` — ${comment}` : ''}`),
   ]);
-  await notify(c, await usersWithRole(c.env, 'dcc'), {
-    requestId: r.id, kind: 'publish',
-    title: `อนุมัติแล้ว รอ Run DCN No.: ${r.doc_no}`,
-    body: `${label(r)} — กรุณา Run DCN No. และประกาศใช้เอกสาร`,
-    link: link(r.id),
-  }, c.user.id);
-  await notify(c, [r.requester_id], {
-    requestId: r.id, kind: 'success', title: `คำขอ ${r.req_no} ได้รับการอนุมัติ`, body: `${c.user.name} อนุมัติแล้ว รอ DCC ประกาศใช้`, link: link(r.id),
-  }, c.user.id);
+  if (res[2].results?.[0]?.status === 'APPROVED') await notifyApproved(c, r);
 }
 
 export async function reject(c, id, comment) {
@@ -203,13 +292,17 @@ export async function reject(c, id, comment) {
   need(c.user, r, 'reject', 'คุณไม่มีสิทธิ์ไม่อนุมัติคำขอนี้');
   comment = String(comment || '').trim();
   if (!comment) throw new HttpError(400, 'กรุณาระบุเหตุผลที่ไม่อนุมัติ');
+  const byApprover = r.status === 'PENDING_APPROVAL';
+  const mine = byApprover ? pendingOf(r, c.user.id).map((a) => positionLabel(a.position)).join(', ') : '';
   await batch(c, [
     guard(c, 'EXISTS (SELECT 1 FROM requests WHERE id = ? AND status = ?)', r.id, r.status),
+    ...(byApprover ? [prep(c, "UPDATE request_approvals SET status = 'REJECTED', comment = ?, decided_at = datetime('now') WHERE request_id = ? AND approver_id = ? AND status = 'PENDING'",
+      comment, r.id, c.user.id)] : []),
     prep(c, "UPDATE requests SET status = 'REJECTED', updated_at = datetime('now') WHERE id = ?", r.id),
-    logStmt(c, r.id, c.user.id, 'REJECT', comment),
+    logStmt(c, r.id, c.user.id, 'REJECT', mine ? `${mine}: ${comment}` : comment),
   ]);
   await notify(c, [r.requester_id], {
-    requestId: r.id, kind: 'danger', title: `คำขอ ${r.req_no} ไม่ได้รับการอนุมัติ`, body: `${c.user.name}: ${comment}`, link: link(r.id),
+    requestId: r.id, kind: 'danger', title: `คำขอ ${r.req_no} ไม่ได้รับการอนุมัติ`, body: `${c.user.name}${mine ? ` (${mine})` : ''}: ${comment}`, link: link(r.id),
   }, c.user.id);
 }
 
@@ -221,8 +314,8 @@ export async function withdraw(c, id, comment = '') {
     prep(c, "UPDATE requests SET status = 'WITHDRAWN', updated_at = datetime('now') WHERE id = ?", r.id),
     logStmt(c, r.id, c.user.id, 'WITHDRAW', comment),
   ]);
-  if (r.approver_id) {
-    await notify(c, [r.approver_id], { requestId: r.id, title: `ผู้ขอยกเลิกคำขอ ${r.req_no}`, body: label(r), link: link(r.id) }, c.user.id);
+  if (r.status === 'PENDING_APPROVAL') {
+    await notify(c, r.approvals.map((a) => a.approverId), { requestId: r.id, title: `ผู้ขอยกเลิกคำขอ ${r.req_no}`, body: label(r), link: link(r.id) }, c.user.id);
   }
 }
 
@@ -347,14 +440,18 @@ export async function importExisting(c, form) {
 
 // ---------------------------------------------------------------- แปลงข้อมูลส่งให้หน้าเว็บ
 export const REQUEST_SELECT = `
-  SELECT q.*, u.name AS requester_name, u.emp_id AS requester_emp, u.department AS requester_dept,
-         a.name AS approver_name, c.name AS category_name
+  SELECT q.*, u.name AS requester_name, u.emp_id AS requester_emp, u.department AS requester_dept, c.name AS category_name,
+         (SELECT json_group_array(json_object(
+                   'id', a.id, 'position', a.position, 'approverId', a.approver_id, 'approverName', au.name,
+                   'status', a.status, 'comment', a.comment, 'decidedAt', a.decided_at))
+            FROM request_approvals a JOIN users au ON au.id = a.approver_id
+           WHERE a.request_id = q.id) AS approvals_json
   FROM requests q
   JOIN users u ON u.id = q.requester_id
-  LEFT JOIN users a ON a.id = q.approver_id
   LEFT JOIN categories c ON c.code = q.category`;
 
 export function mapRequest(q, user) {
+  withApprovals(q);
   return {
     id: q.id,
     reqNo: q.req_no,
@@ -372,7 +469,15 @@ export function mapRequest(q, user) {
     reason: q.reason,
     file: q.upload_name ? { name: q.upload_name, size: q.upload_size, ext: extOf(q.upload_name).slice(1) } : null,
     requester: { id: q.requester_id, name: q.requester_name, empId: q.requester_emp, department: q.requester_dept },
-    approver: q.approver_id ? { id: q.approver_id, name: q.approver_name } : null,
+    approvals: q.approvals.map((a) => ({
+      id: a.id,
+      position: a.position,
+      positionLabel: positionLabel(a.position),
+      approver: { id: a.approverId, name: a.approverName },
+      status: a.status,
+      comment: a.comment,
+      decidedAt: a.decidedAt,
+    })),
     dcnNo: q.dcn_no,
     effectiveDate: q.effective_date,
     createdAt: q.created_at,
@@ -390,7 +495,8 @@ export async function logsFor(env, id) {
 
 /** เงื่อนไข SQL ของ "งานรอฉันดำเนินการ" */
 export function taskFilter(user) {
-  const ors = ["(q.status = 'PENDING_APPROVAL' AND q.approver_id = ?)"];
+  const ors = [`(q.status = 'PENDING_APPROVAL' AND EXISTS (SELECT 1 FROM request_approvals ta
+                  WHERE ta.request_id = q.id AND ta.approver_id = ? AND ta.status = 'PENDING'))`];
   if (can(user, 'admin')) ors.push("q.status = 'PENDING_REVIEW'");
   if (can(user, 'dcc')) ors.push("q.status = 'APPROVED'");
   return { sql: `(${ors.join(' OR ')})`, params: [user.id] };

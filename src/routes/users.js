@@ -1,13 +1,19 @@
 import { HttpError, json, readJson, one, all, run } from '../lib/http.js';
 import { tempPassword } from '../lib/crypto.js';
 import { publicUser, requireRole, hashFor } from '../lib/auth.js';
+import { cleanPositions, splitList } from '../lib/positions.js';
 
-const VALID_ROLES = ['admin', 'approver', 'dcc'];
+// 'approver' ไม่เลือกเอง — ระบบใส่ให้อัตโนมัติเมื่อผู้ใช้ดำรงตำแหน่งผู้อนุมัติอย่างน้อย 1 ตำแหน่ง
+const VALID_ROLES = ['admin', 'dcc'];
 
 function cleanRoles(roles) {
   const list = Array.isArray(roles) ? roles : String(roles || '').split(',');
   return [...new Set(list.map((x) => String(x).trim()).filter((x) => VALID_ROLES.includes(x)))];
 }
+
+/** roles ที่บันทึกจริง = admin/dcc ที่เลือก + approver ถ้ามีตำแหน่ง */
+const withApproverRole = (roles, positions) =>
+  [...splitList(roles).filter((r) => r !== 'approver'), ...(positions ? ['approver'] : [])].join(',');
 
 function validate(body, { partial = false } = {}) {
   const out = {};
@@ -21,6 +27,7 @@ function validate(body, { partial = false } = {}) {
     if (out.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(out.email)) throw new HttpError(400, 'รูปแบบอีเมลไม่ถูกต้อง');
   }
   if (body.roles !== undefined) out.roles = cleanRoles(body.roles).join(',');
+  if (body.positions !== undefined) out.positions = cleanPositions(body.positions).join(',');
   if (body.active !== undefined) out.active = body.active ? 1 : 0;
   return out;
 }
@@ -39,9 +46,10 @@ export default function register(r) {
     if (await one(c.env, 'SELECT id FROM users WHERE emp_id = ?', empId)) throw new HttpError(409, `มีรหัสพนักงาน ${empId} อยู่แล้ว`);
     const v = validate(body);
     const password = tempPassword();
+    const positions = v.positions || '';
     const res = await run(c.env,
-      `INSERT INTO users (emp_id, name, department, email, password_hash, roles, must_change_pw) VALUES (?, ?, ?, ?, ?, ?, 1)`,
-      empId, v.name, v.department || '', v.email || '', await hashFor(c.env, password), v.roles || '');
+      `INSERT INTO users (emp_id, name, department, email, password_hash, roles, positions, must_change_pw) VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+      empId, v.name, v.department || '', v.email || '', await hashFor(c.env, password), withApproverRole(v.roles, positions), positions);
     const user = await one(c.env, 'SELECT * FROM users WHERE id = ?', res.meta.last_row_id);
     return json({ user: publicUser(user), tempPassword: password }, 201);
   });
@@ -49,11 +57,15 @@ export default function register(r) {
   r.patch('/api/users/:id', async (c) => {
     requireRole(c, 'admin');
     const id = Number(c.params.id);
-    if (!(await one(c.env, 'SELECT id FROM users WHERE id = ?', id))) throw new HttpError(404, 'ไม่พบผู้ใช้');
+    const cur = await one(c.env, 'SELECT id, roles, positions FROM users WHERE id = ?', id);
+    if (!cur) throw new HttpError(404, 'ไม่พบผู้ใช้');
     const v = validate(await readJson(c.req), { partial: true });
     if (id === c.user.id) {
       if (v.active === 0) throw new HttpError(400, 'ระงับบัญชีตัวเองไม่ได้');
       if (v.roles !== undefined && !v.roles.split(',').includes('admin')) throw new HttpError(400, 'ถอดสิทธิ์ Admin ของตัวเองไม่ได้');
+    }
+    if (v.roles !== undefined || v.positions !== undefined) {
+      v.roles = withApproverRole(v.roles ?? cur.roles, v.positions ?? cur.positions);
     }
     const keys = Object.keys(v);
     const stmts = [];
