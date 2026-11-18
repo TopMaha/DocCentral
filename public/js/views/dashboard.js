@@ -1,5 +1,5 @@
 import {
-  html, icon, $, mount, api, store, isStaff, roleTags, emptyState, errorState,
+  html, icon, $, mount, api, store, isStaff, userTags, emptyState, errorState,
   docNo, revText, statusPill, fmtAgo, fmtDate, TYPE,
 } from '../core.js';
 
@@ -47,7 +47,7 @@ export default async function dashboardView({ el, isCurrent }) {
         <h1 id="hello" style="margin-top:4px">คุณ${firstName}</h1>
         <div class="row wrap" style="gap:6px;margin-top:10px">
           <span class="tag role-tag mono">${u.empId}</span>${u.department ? html`<span class="tag role-tag">${icon('building-2', 'ic-sm')}${u.department}</span>` : ''}
-          ${roleTags(u.roles, 'role-tag')}
+          ${userTags(u, 'role-tag')}
         </div>
         <nav class="quick-actions" aria-label="ยื่นคำขอด่วน">
           ${['NEW', 'REVISE', 'CANCEL'].map((k) => html`

@@ -1,4 +1,4 @@
-import { html, icon, $, mount, api, store, setStore, toast, initials, roleTags, ROLE } from '../core.js';
+import { html, icon, $, mount, api, store, setStore, toast, initials, userTags, ROLE, POSITION } from '../core.js';
 import { passwordForm, wirePasswordForm } from './change-password.js';
 
 export default function profileView({ el }) {
@@ -11,9 +11,9 @@ export default function profileView({ el }) {
           <div class="row" style="gap:16px">
             <span class="avatar" style="width:64px;height:64px;font-size:22px" aria-hidden="true">${initials(u.name)}</span>
             <div><h2 style="font-size:20px">${u.name}</h2><div class="small muted"><span class="mono">${u.empId}</span>${u.department ? ` · ${u.department}` : ''}</div>
-              <div class="row wrap" style="gap:4px;margin-top:6px">${u.roles.length ? roleTags(u.roles) : html`<span class="tag">ผู้ใช้ทั่วไป</span>`}</div></div>
+              <div class="row wrap" style="gap:4px;margin-top:6px">${u.roles.length || u.positions?.length ? userTags(u) : html`<span class="tag">ผู้ใช้ทั่วไป</span>`}</div></div>
           </div>
-          ${u.roles.length ? html`<ul class="next-steps">${u.roles.map((r) => html`<li><span class="ns-ic">${icon('check')}</span>${ROLE[r]?.label}: ${ROLE[r]?.desc}</li>`)}</ul>` : ''}
+          ${u.roles.length ? html`<ul class="next-steps">${u.roles.map((r) => html`<li><span class="ns-ic">${icon('check')}</span>${ROLE[r]?.label}${r === 'approver' && u.positions?.length ? ` (${u.positions.map((p) => POSITION[p]).join(', ')})` : ''}: ${ROLE[r]?.desc}</li>`)}</ul>` : ''}
         </section>
         <section class="card card-pad">
           <form id="email-form" class="stack" novalidate>

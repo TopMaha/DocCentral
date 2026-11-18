@@ -925,3 +925,46 @@ dialog.modal::backdrop { background: rgba(14, 28, 18, 0.5); backdrop-filter: blu
   .hide-mobile { display: none !important; }
   .page-head { margin-bottom: 16px; }
 }
+
+/* ---------- ผู้อนุมัติตามตำแหน่ง (เลือกตำแหน่ง + คน) ---------- */
+.appr-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--surface, #fff); }
+.appr-row { display: grid; grid-template-columns: minmax(170px, 0.9fr) minmax(0, 1.5fr); gap: 6px 14px; align-items: center; padding: 8px 14px; transition: background .15s; }
+.appr-row + .appr-row { border-top: 1px solid var(--line); }
+.appr-row.on { background: var(--green-50); }
+.appr-check { display: flex; align-items: center; gap: 10px; min-height: 44px; font-weight: 600; cursor: pointer; }
+.appr-check input { width: 20px; height: 20px; margin: 0; accent-color: var(--green-700); cursor: pointer; flex: none; }
+.appr-row.empty .appr-check { color: var(--ink-3); cursor: default; }
+.appr-row.empty .appr-check input { cursor: not-allowed; }
+.appr-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.appr-who .select { flex: 1; min-width: 0; }
+.appr-row:not(.on) .appr-who .select { opacity: .55; }
+.appr-done { flex: none; }
+@media (max-width: 559px) {
+  .appr-row { grid-template-columns: 1fr; padding: 8px 12px 12px; }
+  .appr-row.empty { padding-bottom: 10px; }
+}
+
+/* สถานะผู้อนุมัติในหน้ารายละเอียดคำขอ */
+.appr-status { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.appr-status li { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.appr-status .as-ic { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--surface-2); color: var(--ink-3); }
+.appr-status li.ok .as-ic { background: var(--green-50); color: var(--green-700); }
+.appr-status li.bad .as-ic { background: var(--red-50); color: var(--red-700); }
+.appr-status li.wait .as-ic { background: var(--amber-50); color: var(--amber-700); }
+.appr-status .grow { min-width: 0; }
+.appr-status .as-top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 10px; }
+.appr-status .as-state { font-size: 13px; font-weight: 600; color: var(--ink-3); }
+.appr-status li.ok .as-state { color: var(--green-700); }
+.appr-status li.bad .as-state { color: var(--red-700); }
+.appr-status li.wait .as-state { color: var(--amber-700); }
+.appr-status .tl-comment { margin-top: 6px; padding: 6px 10px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--line); font-size: 14px; white-space: pre-wrap; }
+
+/* สรุปผู้ดำรงตำแหน่ง (หน้าจัดการผู้ใช้) */
+.pos-summary { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.pos-summary li { display: grid; grid-template-columns: minmax(170px, 220px) 1fr; gap: 4px 12px; align-items: center; font-size: 14.5px; }
+.pos-summary .pos-name { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+@media (max-width: 479px) { .pos-summary li { grid-template-columns: 1fr; } }
+
+/* เวอร์ชันระบบ */
+.app-version { padding: 0 22px 14px; font-size: 12px; color: var(--ink-3); }
+.app-version-inline { display: block; text-align: center; font-size: 12px; color: var(--ink-3); padding: 6px 0 2px; }

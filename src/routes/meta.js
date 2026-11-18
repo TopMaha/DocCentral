@@ -1,7 +1,7 @@
 import { HttpError, json, cfg, one, all, localDate, TZ_SQL } from '../lib/http.js';
-import { requireAuth, requireRole, isStaff } from '../lib/auth.js';
-import { usersWithRole } from '../lib/notify.js';
+import { requireAuth, isStaff } from '../lib/auth.js';
 import { ACTIVE, mapRequest, taskFilter, REQUEST_SELECT } from '../lib/workflow.js';
+import { POSITIONS, POSITION_CODES, positionsOf } from '../lib/positions.js';
 
 const ACTIVE_SQL = ACTIVE.map((s) => `'${s}'`).join(',');
 
@@ -30,9 +30,17 @@ export default function register(r) {
     return json({ docNo: `${docPrefix}-${category}-${String(row.n).padStart(seqDigits, '0')}`, rev: '0'.repeat(revDigits) });
   });
 
+  // รายชื่อผู้ดำรงแต่ละตำแหน่งผู้อนุมัติ — ผู้ขอใช้เลือกว่าใครต้องอนุมัติ, Admin ใช้ตอนส่งต่อ/แก้ไขผู้อนุมัติ
   r.get('/api/meta/approvers', async (c) => {
-    requireRole(c, 'admin');
-    return json({ approvers: (await usersWithRole(c.env, 'approver')).map((u) => ({ id: u.id, name: u.name })) });
+    requireAuth(c);
+    const holders = await all(c.env, "SELECT id, name, department, positions FROM users WHERE active = 1 AND positions <> '' ORDER BY name");
+    return json({
+      positions: POSITION_CODES.map((code) => ({
+        code,
+        label: POSITIONS[code],
+        approvers: holders.filter((u) => positionsOf(u).includes(code)).map((u) => ({ id: u.id, name: u.name, department: u.department })),
+      })),
+    });
   });
 
   r.get('/api/meta/stats', async (c) => {

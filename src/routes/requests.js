@@ -3,11 +3,11 @@ import { requireAuth, isStaff } from '../lib/auth.js';
 import { sendObject } from '../lib/files.js';
 import {
   createRequest, forward, approve, reject, withdraw, runDcn, publish,
-  mapRequest, logsFor, canView, taskFilter, REQUEST_SELECT,
+  mapRequest, logsFor, canView, taskFilter, withApprovals, REQUEST_SELECT,
 } from '../lib/workflow.js';
 
 async function detail(c, id) {
-  const q = await one(c.env, `${REQUEST_SELECT} WHERE q.id = ?`, Number(id));
+  const q = withApprovals(await one(c.env, `${REQUEST_SELECT} WHERE q.id = ?`, Number(id)));
   if (!q || !canView(c.user, q)) throw new HttpError(404, 'ไม่พบคำขอ');
   return json({ request: mapRequest(q, c.user), logs: await logsFor(c.env, q.id) });
 }
@@ -58,7 +58,7 @@ export default function register(r) {
 
   r.get('/api/requests/:id/file', async (c) => {
     requireAuth(c);
-    const q = await one(c.env, 'SELECT * FROM requests WHERE id = ?', Number(c.params.id));
+    const q = withApprovals(await one(c.env, `${REQUEST_SELECT} WHERE q.id = ?`, Number(c.params.id)));
     if (!q || !canView(c.user, q)) throw new HttpError(404, 'ไม่พบคำขอ');
     if (!q.upload_key) throw new HttpError(404, 'คำขอนี้ไม่มีไฟล์แนบ');
     let key = q.upload_key;
@@ -78,7 +78,7 @@ export default function register(r) {
     return json({ request: { id: created.id, reqNo: created.req_no, docNo: created.doc_no } }, 201);
   });
 
-  r.post('/api/requests/:id/forward', action((c, b) => forward(c, c.params.id, b.approverId, String(b.comment || '').trim())));
+  r.post('/api/requests/:id/forward', action((c, b) => forward(c, c.params.id, b.approvals, String(b.comment || '').trim())));
   r.post('/api/requests/:id/approve', action((c, b) => approve(c, c.params.id, String(b.comment || '').trim())));
   r.post('/api/requests/:id/reject', action((c, b) => reject(c, c.params.id, b.comment)));
   r.post('/api/requests/:id/withdraw', action((c, b) => withdraw(c, c.params.id, String(b.comment || '').trim())));

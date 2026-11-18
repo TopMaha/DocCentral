@@ -312,6 +312,23 @@ export const docNo = (no, extra = '') => html`<span class="docno ${extra}">${no}
 export const fileExt = (ext, sm = false) => html`<span class="file-ext ${sm ? 'sm' : ''}" data-ext="${ext}" aria-hidden="true">${ext}</span>`;
 export const roleTags = (roles = [], extra = '') => roles.map((r) => html`<span class="tag ${ROLE[r]?.cls || ''} ${extra}">${ROLE[r]?.label || r}</span>`);
 
+/** ตำแหน่งผู้อนุมัติ — ลำดับนี้คือลำดับที่แสดง (ต้องตรงกับ src/lib/positions.js) */
+export const POSITION = {
+  QA_MGR: 'QA Manager',
+  ENG_MGR: 'ENG Manager',
+  PRD_MGR: 'Production Manager',
+  MAT_MGR: 'Material Manager',
+  GM: 'General Manager',
+};
+export const positionTags = (codes = [], extra = '') => codes.map((p) => html`<span class="tag tag-blue ${extra}">${icon('stamp', 'ic-sm')}${POSITION[p] || p}</span>`);
+
+/** แท็กสิทธิ์ของผู้ใช้: Admin / DCC + ตำแหน่งผู้อนุมัติ (แทนแท็ก "ผู้อนุมัติ" แบบรวม) */
+export function userTags(u, extra = '') {
+  const positions = u?.positions || [];
+  const roles = (u?.roles || []).filter((r) => r !== 'approver' || !positions.length);
+  return [...roleTags(roles, extra), ...positionTags(positions, extra)];
+}
+
 export function emptyState({ iconName = 'file-search', title, text = '', action = '' }) {
   return html`<div class="empty">
     <div class="empty-icon">${icon(iconName)}</div>

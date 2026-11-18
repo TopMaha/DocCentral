@@ -1,7 +1,8 @@
 import {
   html, icon, $, $$, mount, store, setStore, onStore, api, hasRole, isStaff,
-  initials, roleTags, emptyState, parseQuery, toast, updateBadges,
+  initials, userTags, emptyState, parseQuery, toast, updateBadges,
 } from './core.js';
+import { APP_VERSION } from './version.js';
 import loginView from './views/login.js';
 import changePasswordView from './views/change-password.js';
 import libraryView from './views/library.js';
@@ -94,6 +95,7 @@ function appShell() {
         </a>
         <button class="icon-btn" data-logout aria-label="ออกจากระบบ" title="ออกจากระบบ">${icon('log-out')}</button>
       </div>
+      <div class="app-version">Wesco DCC · Version ${APP_VERSION}</div>
     </aside>
 
     <div class="main">
@@ -232,7 +234,7 @@ function showUserMenu(trigger) {
       <span class="avatar" aria-hidden="true">${initials(u.name)}</span>
       <div class="grow" style="line-height:1.4"><b style="display:block">${u.name}</b>
         <span class="xs muted mono">${u.empId}</span>${u.department ? html`<span class="xs muted"> · ${u.department}</span>` : ''}
-        <div class="row wrap" style="gap:4px;margin-top:4px">${roleTags(u.roles)}</div></div>
+        <div class="row wrap" style="gap:4px;margin-top:4px">${userTags(u)}</div></div>
     </div>
     <ul class="menu-list" role="menu">
       <li><a role="menuitem" href="#/profile">${icon('user-round')}โปรไฟล์และรหัสผ่าน</a></li>
@@ -240,7 +242,8 @@ function showUserMenu(trigger) {
       ${admin.map((i) => html`<li><a role="menuitem" href="${i.href}">${icon(i.icon)}${i.label}</a></li>`)}
       <li class="menu-sep" role="separator"></li>
       <li><button role="menuitem" class="danger" data-logout>${icon('log-out')}ออกจากระบบ</button></li>
-    </ul>`, 'เมนูผู้ใช้');
+    </ul>
+    <span class="app-version-inline">Version ${APP_VERSION}</span>`, 'เมนูผู้ใช้');
   el.addEventListener('click', (e) => { if (e.target.closest('a')) closePopover(); });
 }
 
